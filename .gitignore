@@ -2,7 +2,6 @@
 node_modules/
 npm-debug.log
 
-# 
 # Python
 venv/
 __pycache__/
