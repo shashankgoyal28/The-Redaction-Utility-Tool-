@@ -1,47 +1,73 @@
 📄 PII Redaction Tool
 
 A full-stack application for detecting and redacting Personally Identifiable Information (PII) from text, PDF, and images.
-Built with React + TypeScript, FastAPI, and Python text/PDF processing tools.
+Built with React + TypeScript, FastAPI, and Python-based PDF/Text processing tools.
+
+⸻
 
 🚀 Features
+
 🔍 PII Detection
 
 Detects the following using regex-based rules:
+	•	📧 Emails
+	•	📱 Phone Numbers
+	•	🧑 Names
+	•	🏠 Addresses
 
-📧 Emails
-📱 Phone Numbers
-🧑 Names
-🏠 Addresses
+⸻
 
 🖥️ Two Operating Modes
-1. Text Mode
-Paste any text directly.
-Choose redaction style:
-Typed labels → [EMAIL_1]
-Black boxes → ██████
-Custom labels → [REDACTED]
-Output includes:
-Original text
-Redacted text
-Redaction Summary
 
-2. PDF Mode
-Upload PDFs, JPEGs, PNGs.
-Backend extracts text, detects PII, and redacts the PDF using PyMuPDF.
+1️⃣ Text Mode
+
+Paste any text directly.
+
+Choose redaction style:
+	•	Typed labels → [EMAIL_1]
+	•	Black boxes → ██████
+	•	Custom labels → [REDACTED]
+
+Output includes:
+	•	Original text
+	•	Redacted text
+	•	Redaction Summary
+
+⸻
+
+2️⃣ PDF Mode
+
+Upload:
+	•	PDFs
+	•	JPEGs
+	•	PNGs
+
+Backend:
+	1.	Extracts text
+	2.	Detects PII
+	3.	Redacts using PyMuPDF
+
 PDFs always use solid black-box redaction (industry standard & legally safe).
-Produces a downloadable redacted PDF.
+
+Output:
+	•	Downloadable redacted PDF
+
+⸻
+
 🧠 How It Works (Architecture Overview)
 
 Frontend (React + TypeScript)
 
 Handles:
-User interaction
-File upload
-Text mode input
-Redaction options
-Preview & results UI
-Downloading the final PDF
+	•	User interaction
+	•	File uploads
+	•	Text input
+	•	Redaction options
+	•	Results preview
+	•	Downloading the final PDF
+
 Key components:
+
 InputPage.tsx
 ResultsPage.tsx
 FileUploader.tsx
@@ -49,86 +75,102 @@ api/redact.ts
 
 Backend (FastAPI)
 
-API routes:
-Endpoint	Description
-POST /api/redact-text	Redacts raw text input
-POST /api/redact-file	Redacts uploaded PDF/image
-GET /api/download/{filename}	Downloads redacted PDF
+API Routes
+
+Endpoint              | Description
+POST /api/redact-text | Redacts raw text
+POST /api/redact-file | Redacts uploaded file
+GET /api/download/{filename} | Download redacted PDF
 
 Responsibilities:
-Text extraction (PDF/Image)
-PII detection
-Text redaction (labels)
-PDF redaction (black boxes)
-
-File storage & cleanup
+	•	Text extraction
+	•	PII detection
+	•	Text redaction
+	•	PDF redaction
+	•	File storage
+	•	Cleanup
 
 Core Python Modules
-Module	Purpose
-pdf_extractor.py	Extract text from PDFs or images (OCR fallback)
-pii_detector.py	Regex-based detection of EMAIL, PHONE, NAME, ADDRESS
-redactor.py	Generates redacted text + label mapping
-PyMuPDF (fitz)	Draws black boxes over sensitive content in the PDF
 
-🔁 End-to-End Workflow
+Module | Purpose  
+pdf_extractor.py | Extract text from PDFs/images  
+pii_detector.py | Regex detection of EMAIL/PHONE/NAME/ADDRESS
+redactor.py | Generates redacted text 
+PyMuPDF | Draws black boxes on PDFs
+
+End-to-End Workflow
+
 Text Mode
-User enters text → chooses PII/label options.
-Frontend sends JSON to /api/redact-text.
+	1.	User enters text
+	2.	Selects redaction options
+	3.	Frontend sends request → /api/redact-text
 
 Backend:
-Detects PII
-Applies redaction based on label style
-Response returned:
+	1.	Detects PII
+	2.	Applies redaction
+	3.	Returns:
 original_text
 redacted_text
 summary
-UI displays results.
+
+Frontend displays results.
 
 PDF Mode
-User uploads PDF/image.
-Frontend sends file via FormData → /api/redact-file.
+	1.	User uploads PDF/image
+	2.	Frontend sends file → /api/redact-file
 
 Backend:
-Saves file
-Extracts text
-Detects PII
-Applies text redaction (for display)
-Uses PyMuPDF to draw solid black boxes over sensitive regions
-Saves final PDF
+	1.	Saves file
+	2.	Extracts text
+	3.	Detects PII
+	4.	Applies redaction
+	5.	Draws black boxes on PDF
+	6.	Saves final PDF
 
-Frontend retrieves:
+Frontend receives:
+
 summary
-preview
 download_url
 
-User downloads redacted PDF.
+User downloads final redacted PDF.
 
 🛠️ Tech Stack
+
 Frontend
-React (Vite)
-TypeScript
-React Router
-HTML/CSS (custom UI styling)
+	•	React (Vite)
+	•	TypeScript
+	•	React Router
+	•	HTML/CSS
 
 Backend
-FastAPI
-Python 3.10+
-PyMuPDF (PDF redaction)
-pdfplumber (PDF text extraction)
-Pillow + pytesseract (OCR fallback)
-Uvicorn (ASGI server)
+	•	FastAPI
+	•	Python 3.10+
+	•	PyMuPDF
+	•	pdfplumber
+	•	Pillow
+	•	pytesseract
+	•	Uvicorn
+
+Database
+	•	PostgreSQL
+	•	SQLAlchemy (logging redaction history)
+
+⸻
 
 📂 Project Structure
+
 PII_Project/
 │
 ├── pii-redaction-backend/
-│   ├── main.py                  # FastAPI entrypoint
-│   ├── routers/redact.py        # API endpoints
+│   ├── main.py
+│   ├── database.py
+│   ├── models.py
+│   ├── routers/redact.py
 │   ├── modules/
-│   │   ├── pdf_extractor.py     # Extract PDF/image text
-│   │   ├── pii_detector.py      # Detect PII
-│   │   ├── redactor.py          # Create redacted text
-│   ├── redacted_pdfs/           # Outputs
+│   │   ├── pdf_extractor.py
+│   │   ├── pii_detector.py
+│   │   ├── redactor.py
+│   ├── redacted_pdfs/
 │   ├── requirements.txt
 │   └── venv/
 │
@@ -140,53 +182,96 @@ PII_Project/
     ├── public/
     └── package.json
 
-▶️ Running the Project
-Backend
-cd pii-redaction-backend
-source venv/bin/activate  # or activate.bat on Windows
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+Running the Project Locally
 
-Frontend
-cd pii-redaction-ui
+Below is the complete step-by-step process to run the project locally.
+
+1️⃣ Clone Repository
+
+git clone https://github.com/your-repo/PII_Project.git
+cd PII_Project
+
+Database Setup (PostgreSQL)
+Start PostgreSQL
+
+Mac (Homebrew):
+
+brew services start postgresql
+Create Database
+createdb pii_redaction_db
+Access Database
+psql -U shashankgoyal -d pii_redaction_db
+Inside PostgreSQL:
+Show Tables
+\dt
+Show Logs
+SELECT * FROM redaction_logs;
+\q
+Backend Setup
+Go to backend folder:
+cd pii-redaction-backend
+Create virtual environment:
+python3 -m venv venv
+Activate environment:
+Mac/Linux
+source venv/bin/activate
+Windows
+venv\Scripts\activate
+Install dependencies:
+pip install -r requirements.txt
+Run backend server:
+uvicorn main:app --reload
+Backend runs on:
+http://127.0.0.1:8000
+
+Swagger API Docs:
+http://127.0.0.1:8000/docs
+
+Frontend Setup
+Go to frontend folder:
+cd ../pii-redaction-ui
+
+Install dependencies:
 npm install
+
+Run frontend:
 npm run dev
 
-Frontend runs at: http://localhost:5173
-Backend runs at: http://localhost:8000
-Currently working on the Local Environment working onto to host on Production Environment.
+Frontend runs on:
+http://localhost:5173
 
-🧪 Example Outputs
-Text Before:
-Contact John Doe at john@example.com or 9876543210.
+🧪 Example Output
+Text Before
+Contact John Doe at john@example.com or 9876543210
 
-Redacted (Typed):
-Contact [NAME_1] at [EMAIL_1] or [PHONE_1].
+Redacted (Typed)
+Contact [NAME_1] at [EMAIL_1] or [PHONE_1]
 
-Redacted (Blackbox):
-Contact ██████ at ██████ or ███████.
-
-PDF Output:
-
-Sensitive regions are fully black boxed
-
-Downloadable from /api/download/<filename>.pdf
+Redacted (Blackbox)
+Contact ██████ at ██████ or ███████
 
 🔒 Security Notes
+	•	Redactions are burned into the PDF
+	•	Hidden data cannot be recovered
+	•	Custom labels are not written into PDFs
+	•	File system access is restricted
 
-PDF redaction uses annotation + burn-in, ensuring data is unrecoverable.
-Custom labels are never written into PDFs (only solid black boxes).
-File access outside upload directory is blocked.
+⸻
 
 📝 Future Improvements
+	•	ML-based PII detection
+	•	Better OCR alignment
+	•	Preview redaction mode
+	•	Multi-language PII detection
+	•	Highlight redaction option
 
-Machine Learning–based PII detection
-Better OCR alignment for scanned PDFs
-Highlight mode (instead of black boxes)
-Multi-language PII patterns
-Fine-grained redaction preview before applying
+⸻
 
 🧑‍💻 Author
 
-Shashank Goyal +91 8107787245
-Full-stack developer | Python & React | Embedded & Systems Engineering
+Shashank Goyal
+Full-Stack Developer | Python | React | Embedded Systems
+
+📞 +91 8107787245
+
+Currently working on improving the local deployment setup and preparing the system for production hosting.
