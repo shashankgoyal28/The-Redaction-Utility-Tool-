@@ -186,11 +186,6 @@ Running the Project Locally
 
 Below is the complete step-by-step process to run the project locally.
 
-1️⃣ Clone Repository
-
-git clone https://github.com/your-repo/PII_Project.git
-cd PII_Project
-
 Database Setup (PostgreSQL)
 Start PostgreSQL
 
