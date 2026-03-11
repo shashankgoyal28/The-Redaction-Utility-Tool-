@@ -1,3 +1,394 @@
+# from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+# from fastapi.responses import FileResponse
+# from pydantic import BaseModel, Field
+# from typing import Optional, Dict, List, Literal
+
+# from modules.pdf_extractor import extract_text_from_bytes
+# from modules.pii_detector import detect_pii
+# from modules.redactor import apply_redaction
+
+# import fitz
+# import os
+# import uuid
+# import logging
+
+# router = APIRouter()
+
+# logger = logging.getLogger(__name__)
+
+# OUTPUT_DIR = "redacted_pdfs"
+# os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# def _normalize_for_search(s: str) -> str:
+#     """Normalize whitespace for more robust matching when searching in PDFs."""
+#     return " ".join(s.split())
+
+# class RedactionItem(BaseModel):
+#     type: str
+#     original: str
+#     label: str
+#     start: int
+#     end: int
+
+
+# class RedactionSummary(BaseModel):
+#     counts: Dict[str, int]
+#     items: List[RedactionItem]
+
+
+# class RedactionResponse(BaseModel):
+#     message: Optional[str] = None
+#     download_url: Optional[str] = None
+#     original_text: str
+#     redacted_text: str
+#     summary: RedactionSummary
+
+
+# class RedactTextRequest(BaseModel):
+#     text: str = Field("", description="Input text to be redacted")
+#     redact_emails: bool = True
+#     redact_phones: bool = True
+#     redact_names: bool = False
+#     redact_addresses: bool = False
+#     label_style: Literal["typed", "blackbox", "custom"] = "typed"
+#     custom_label: Optional[str] = None
+
+
+# class RedactFromPathRequest(BaseModel):
+#     path: str
+#     options: Optional[Dict[str, object]] = None
+
+# def _filter_entities(
+#     entities: List[Dict],
+#     redact_emails: bool,
+#     redact_phones: bool,
+#     redact_names: bool,
+#     redact_addresses: bool,
+# ) -> List[Dict]:
+#     allowed = {
+#         k
+#         for k, v in {
+#             "EMAIL": redact_emails,
+#             "PHONE": redact_phones,
+#             "NAME": redact_names,
+#             "ADDRESS": redact_addresses,
+#         }.items()
+#         if v
+#     }
+#     return [e for e in entities if e["type"] in allowed]
+
+
+# def _build_summary(items: List[Dict]) -> RedactionSummary:
+#     counts: Dict[str, int] = {}
+#     for it in items:
+#         counts[it["type"]] = counts.get(it["type"], 0) + 1
+#     return RedactionSummary(
+#         counts=counts,
+#         items=[RedactionItem(**it) for it in items],
+#     )
+
+# @router.post("/redact-text", response_model=RedactionResponse)
+# async def redact_text(payload: RedactTextRequest):
+#     logger.info("Received /redact-text request")
+#     text = payload.text or ""
+#     entities = detect_pii(text)
+#     entities = _filter_entities(
+#         entities,
+#         payload.redact_emails,
+#         payload.redact_phones,
+#         payload.redact_names,
+#         payload.redact_addresses,
+#     )
+
+#     redacted_text, items = apply_redaction(
+#         text, entities, payload.label_style, payload.custom_label
+#     )
+#     summary = _build_summary(items)
+
+#     return RedactionResponse(
+#         message="Text redacted successfully",
+#         download_url=None,
+#         original_text=text,
+#         redacted_text=redacted_text,
+#         summary=summary,
+#     )
+
+# @router.post("/redact-file", response_model=RedactionResponse)
+# async def redact_file(
+#     file: UploadFile = File(...),
+#     redact_emails: bool = Form(True),
+#     redact_phones: bool = Form(True),
+#     redact_names: bool = Form(False),
+#     redact_addresses: bool = Form(False),
+#     label_style: Literal["typed", "blackbox", "custom"] = Form("typed"),
+#     custom_label: Optional[str] = Form(None),
+#     return_file: bool = Form(False),
+# ):
+#     """
+#     Upload a file (PDF/PNG/JPEG), perform PII detection + redaction.
+
+#     - If return_file=False (default): return JSON metadata + download URL.
+#     - If return_file=True: return the redacted PDF directly as a file response.
+#     """
+#     logger.info("Received /redact-file request for filename=%s", file.filename)
+
+#     if file.content_type not in ["application/pdf", "image/png", "image/jpeg"]:
+#         logger.warning(
+#             "Unsupported file type: %s", file.content_type
+#         )
+#         raise HTTPException(415, "Only PDF, PNG or JPEG supported right now.")
+
+#     raw_bytes = await file.read()
+#     if not raw_bytes:
+#         raise HTTPException(400, "Uploaded file is empty or could not be read.")
+
+#     base_input = f"{OUTPUT_DIR}/{uuid.uuid4()}_input"
+#     if file.filename and "." in file.filename:
+#         ext = file.filename.rsplit(".", 1)[-1]
+#         input_path = f"{base_input}.{ext}"
+#     else:
+#         input_path = (
+#             f"{base_input}.pdf"
+#             if file.content_type == "application/pdf"
+#             else f"{base_input}.bin"
+#         )
+
+#     try:
+#         with open(input_path, "wb") as f:
+#             f.write(raw_bytes)
+#         logger.info("Saved uploaded file to %s", input_path)
+#     except Exception as e:
+#         logger.exception("Failed to save uploaded file")
+#         raise HTTPException(500, detail=f"Failed to save uploaded file: {e}")
+
+#     try:
+#         text = extract_text_from_bytes(
+#             raw_bytes, content_type=file.content_type, filename=file.filename
+#         )
+#         logger.info("Extracted text from file (%d chars)", len(text))
+#     except Exception as e:
+#         logger.exception("Text extraction failed")
+#         try:
+#             if os.path.exists(input_path):
+#                 os.remove(input_path)
+#         except Exception:
+#             pass
+#         raise HTTPException(400, detail=f"Text extraction failed: {e}")
+
+#     entities = detect_pii(text)
+#     entities = _filter_entities(
+#         entities, redact_emails, redact_phones, redact_names, redact_addresses
+#     )
+
+#     redacted_text, items = apply_redaction(text, entities, label_style, custom_label)
+#     summary = _build_summary(items)
+
+#     output_path = input_path
+#     try:
+#         if file.content_type == "application/pdf":
+#             logger.info("Applying PDF redactions")
+#             doc = fitz.open(input_path)
+
+#             for page_index in range(doc.page_count):
+#                 page = doc.load_page(page_index)
+#                 try:
+#                     page_text = page.get_text("text") or ""
+#                 except Exception:
+#                     page_text = ""
+#                 page_text_norm = _normalize_for_search(page_text).lower()
+
+#                 for item in items:
+#                     original = item["original"]
+#                     label = item["label"]
+#                     if not original or not original.strip():
+#                         continue
+
+#                     search_text = _normalize_for_search(original).strip()
+#                     if not search_text:
+#                         continue
+
+#                     rects = []
+#                     try:
+#                         rects = page.search_for(search_text, hit_max=256)
+#                     except Exception:
+#                         rects = []
+
+#                     if not rects and search_text.lower() in page_text_norm:
+#                         try:
+#                             rects = page.search_for(search_text.lower(), hit_max=256)
+#                         except Exception:
+#                             rects = []
+
+#                     if not rects and len(search_text.split()) > 1:
+#                         tokens = search_text.split()
+#                         for tok in tokens:
+#                             if len(tok) < 3:
+#                                 continue
+#                             try:
+#                                 found = page.search_for(tok, hit_max=64)
+#                             except Exception:
+#                                 found = []
+#                             rects.extend(found)
+
+#                     if not rects:
+#                         continue
+
+#                     for inst in rects:
+#                         try:
+#                             page.add_redact_annot(inst, fill=(0, 0, 0))
+#                             if label:
+#                                 page.insert_text(
+#                                     (inst.x0, inst.y0 - 8),
+#                                     label,
+#                                     color=(1, 1, 1),
+#                                 )
+#                         except Exception as ex:
+#                             logger.warning(
+#                                 "Failed to redact rect on page %d: %s", page_index, ex
+#                             )
+#                             continue
+
+#                 page.apply_redactions()
+
+#             output_path = f"{OUTPUT_DIR}/{uuid.uuid4()}_redacted.pdf"
+#             doc.save(output_path)
+#             doc.close()
+#             logger.info("Saved redacted PDF to %s", output_path)
+
+#         else:
+#             logger.info("Wrapping image into PDF")
+#             img_doc = fitz.open()
+#             img_doc.new_page()
+#             page = img_doc[0]
+#             page.insert_image(page.rect, stream=raw_bytes)
+#             output_path = f"{OUTPUT_DIR}/{uuid.uuid4()}_redacted.pdf"
+#             img_doc.save(output_path)
+#             img_doc.close()
+#             logger.info("Saved image-based PDF to %s", output_path)
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         logger.exception("PDF/image redaction failed")
+#         raise HTTPException(500, detail=f"PDF redaction failed: {e}")
+#     finally:
+#         try:
+#             if os.path.exists(input_path) and input_path != output_path:
+#                 os.remove(input_path)
+#                 logger.info("Cleaned up temporary file %s", input_path)
+#         except Exception as e:
+#             logger.warning("Failed to delete temp file %s: %s", input_path, e)
+
+#     download_url = f"/api/download/{os.path.basename(output_path)}"
+
+#     if return_file:
+#         logger.info("Returning redacted file directly")
+#         return FileResponse(
+#             output_path,
+#             media_type="application/pdf",
+#             filename=os.path.basename(output_path),
+#         )
+
+#     return RedactionResponse(
+#         message="File redacted successfully",
+#         download_url=download_url,
+#         original_text=text,
+#         redacted_text=redacted_text,
+#         summary=summary,
+#     )
+ 
+# @router.post("/redact-from-path", response_model=RedactionResponse)
+# async def redact_from_path(payload: RedactFromPathRequest):
+#     """
+#     Accepts JSON { path: string, options?: {...} } where path is a server-local path the server can access.
+
+#     SECURITY NOTE:
+#       This endpoint is DISABLED when ENV is set to 'production' or 'prod'.
+#     """
+#     env = os.getenv("ENV", "").lower()
+#     if env in {"production", "prod"}:
+#         logger.warning("Attempt to use /redact-from-path in production")
+#         raise HTTPException(
+#             status_code=403, detail="This endpoint is disabled in production."
+#         )
+
+#     path = payload.path
+#     logger.info("Received /redact-from-path for %s", path)
+
+#     if not os.path.exists(path):
+#         raise HTTPException(404, detail="Path not found on server")
+
+#     try:
+#         with open(path, "rb") as f:
+#             raw_bytes = f.read()
+#     except Exception as e:
+#         logger.exception("Failed to read server file")
+#         raise HTTPException(500, detail=f"Failed to read server file: {e}")
+
+#     try:
+#         text = extract_text_from_bytes(raw_bytes, content_type=None, filename=path)
+#     except Exception as e:
+#         logger.exception("Text extraction failed for server file")
+#         raise HTTPException(
+#             400, detail=f"Text extraction failed for server file: {e}"
+#         )
+
+#     options = payload.options or {}
+#     redact_emails = bool(options.get("redact_emails", True))
+#     redact_phones = bool(options.get("redact_phones", True))
+#     redact_names = bool(options.get("redact_names", False))
+#     redact_addresses = bool(options.get("redact_addresses", False))
+
+#     label_style = options.get("label_style", "typed")
+
+#     if label_style not in {"typed", "blackbox", "custom"}:
+#         raise HTTPException(
+#             status_code=400,
+#             detail="Invalid label_style. Allowed: 'typed', 'blackbox', 'custom'.",
+#         )
+#     custom_label = options.get("custom_label")
+
+#     entities = detect_pii(text)
+#     entities = _filter_entities(
+#         entities, redact_emails, redact_phones, redact_names, redact_addresses
+#     )
+#     redacted_text, items = apply_redaction(text, entities, label_style, custom_label)
+#     summary = _build_summary(items)
+
+#     try:
+#         img_doc = fitz.open()
+#         img_doc.new_page()
+#         page = img_doc[0]
+#         page.insert_image(page.rect, stream=raw_bytes)
+#         output_path = f"{OUTPUT_DIR}/{uuid.uuid4()}_redacted.pdf"
+#         img_doc.save(output_path)
+#         img_doc.close()
+#     except Exception:
+#         output_path = path
+
+#     download_url = f"/api/download/{os.path.basename(output_path)}"
+
+#     return RedactionResponse(
+#         message="Server-path file redacted",
+#         download_url=download_url,
+#         original_text=text,
+#         redacted_text=redacted_text,
+#         summary=summary,
+#     )
+
+
+# @router.get("/download/{filename}")
+# async def download_file(filename: str):
+#     file_path = f"{OUTPUT_DIR}/{filename}"
+#     if not os.path.exists(file_path):
+#         raise HTTPException(404, "File not found")
+
+#     logger.info("Serving download for %s", filename)
+#     return FileResponse(
+#         file_path,
+#         media_type="application/pdf",
+#         filename=filename,
+#     )
+
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -12,6 +403,10 @@ import os
 import uuid
 import logging
 
+# DATABASE IMPORTS
+from database import SessionLocal
+from models import RedactionLog
+
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
@@ -19,9 +414,29 @@ logger = logging.getLogger(__name__)
 OUTPUT_DIR = "redacted_pdfs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+
+# ---------------- DATABASE LOGGER ----------------
+def log_redaction(filename: str, entities: str, output_path: str):
+    try:
+        db = SessionLocal()
+
+        log = RedactionLog(
+            filename=filename,
+            redacted_entities=entities,
+            output_path=output_path
+        )
+
+        db.add(log)
+        db.commit()
+        db.close()
+
+    except Exception as e:
+        logger.warning(f"Failed to log redaction: {e}")
+
+
 def _normalize_for_search(s: str) -> str:
-    """Normalize whitespace for more robust matching when searching in PDFs."""
     return " ".join(s.split())
+
 
 class RedactionItem(BaseModel):
     type: str
@@ -58,6 +473,7 @@ class RedactFromPathRequest(BaseModel):
     path: str
     options: Optional[Dict[str, object]] = None
 
+
 def _filter_entities(
     entities: List[Dict],
     redact_emails: bool,
@@ -65,6 +481,7 @@ def _filter_entities(
     redact_names: bool,
     redact_addresses: bool,
 ) -> List[Dict]:
+
     allowed = {
         k
         for k, v in {
@@ -75,23 +492,30 @@ def _filter_entities(
         }.items()
         if v
     }
+
     return [e for e in entities if e["type"] in allowed]
 
 
 def _build_summary(items: List[Dict]) -> RedactionSummary:
     counts: Dict[str, int] = {}
+
     for it in items:
         counts[it["type"]] = counts.get(it["type"], 0) + 1
+
     return RedactionSummary(
         counts=counts,
         items=[RedactionItem(**it) for it in items],
     )
 
+
+# ---------------- TEXT REDACTION ----------------
 @router.post("/redact-text", response_model=RedactionResponse)
 async def redact_text(payload: RedactTextRequest):
-    logger.info("Received /redact-text request")
+
     text = payload.text or ""
+
     entities = detect_pii(text)
+
     entities = _filter_entities(
         entities,
         payload.redact_emails,
@@ -103,6 +527,7 @@ async def redact_text(payload: RedactTextRequest):
     redacted_text, items = apply_redaction(
         text, entities, payload.label_style, payload.custom_label
     )
+
     summary = _build_summary(items)
 
     return RedactionResponse(
@@ -113,6 +538,8 @@ async def redact_text(payload: RedactTextRequest):
         summary=summary,
     )
 
+
+# ---------------- FILE REDACTION ----------------
 @router.post("/redact-file", response_model=RedactionResponse)
 async def redact_file(
     file: UploadFile = File(...),
@@ -124,164 +551,89 @@ async def redact_file(
     custom_label: Optional[str] = Form(None),
     return_file: bool = Form(False),
 ):
-    """
-    Upload a file (PDF/PNG/JPEG), perform PII detection + redaction.
-
-    - If return_file=False (default): return JSON metadata + download URL.
-    - If return_file=True: return the redacted PDF directly as a file response.
-    """
-    logger.info("Received /redact-file request for filename=%s", file.filename)
 
     if file.content_type not in ["application/pdf", "image/png", "image/jpeg"]:
-        logger.warning(
-            "Unsupported file type: %s", file.content_type
-        )
-        raise HTTPException(415, "Only PDF, PNG or JPEG supported right now.")
+        raise HTTPException(415, "Only PDF, PNG or JPEG supported.")
 
     raw_bytes = await file.read()
-    if not raw_bytes:
-        raise HTTPException(400, "Uploaded file is empty or could not be read.")
 
     base_input = f"{OUTPUT_DIR}/{uuid.uuid4()}_input"
+
+    ext = "pdf"
     if file.filename and "." in file.filename:
-        ext = file.filename.rsplit(".", 1)[-1]
-        input_path = f"{base_input}.{ext}"
-    else:
-        input_path = (
-            f"{base_input}.pdf"
-            if file.content_type == "application/pdf"
-            else f"{base_input}.bin"
-        )
+        ext = file.filename.split(".")[-1]
 
-    try:
-        with open(input_path, "wb") as f:
-            f.write(raw_bytes)
-        logger.info("Saved uploaded file to %s", input_path)
-    except Exception as e:
-        logger.exception("Failed to save uploaded file")
-        raise HTTPException(500, detail=f"Failed to save uploaded file: {e}")
+    input_path = f"{base_input}.{ext}"
 
-    try:
-        text = extract_text_from_bytes(
-            raw_bytes, content_type=file.content_type, filename=file.filename
-        )
-        logger.info("Extracted text from file (%d chars)", len(text))
-    except Exception as e:
-        logger.exception("Text extraction failed")
-        try:
-            if os.path.exists(input_path):
-                os.remove(input_path)
-        except Exception:
-            pass
-        raise HTTPException(400, detail=f"Text extraction failed: {e}")
+    with open(input_path, "wb") as f:
+        f.write(raw_bytes)
 
-    entities = detect_pii(text)
-    entities = _filter_entities(
-        entities, redact_emails, redact_phones, redact_names, redact_addresses
+    text = extract_text_from_bytes(
+        raw_bytes,
+        content_type=file.content_type,
+        filename=file.filename,
     )
 
-    redacted_text, items = apply_redaction(text, entities, label_style, custom_label)
+    entities = detect_pii(text)
+
+    entities = _filter_entities(
+        entities,
+        redact_emails,
+        redact_phones,
+        redact_names,
+        redact_addresses,
+    )
+
+    redacted_text, items = apply_redaction(
+        text,
+        entities,
+        label_style,
+        custom_label,
+    )
+
     summary = _build_summary(items)
 
-    output_path = input_path
-    try:
-        if file.content_type == "application/pdf":
-            logger.info("Applying PDF redactions")
-            doc = fitz.open(input_path)
+    doc = fitz.open(input_path)
 
-            for page_index in range(doc.page_count):
-                page = doc.load_page(page_index)
-                try:
-                    page_text = page.get_text("text") or ""
-                except Exception:
-                    page_text = ""
-                page_text_norm = _normalize_for_search(page_text).lower()
+    for page in doc:
 
-                for item in items:
-                    original = item["original"]
-                    label = item["label"]
-                    if not original or not original.strip():
-                        continue
+        for item in items:
 
-                    search_text = _normalize_for_search(original).strip()
-                    if not search_text:
-                        continue
+            original = item["original"]
+            label = item["label"]
 
-                    rects = []
-                    try:
-                        rects = page.search_for(search_text, hit_max=256)
-                    except Exception:
-                        rects = []
+            rects = page.search_for(original)
 
-                    if not rects and search_text.lower() in page_text_norm:
-                        try:
-                            rects = page.search_for(search_text.lower(), hit_max=256)
-                        except Exception:
-                            rects = []
+            for rect in rects:
+                page.add_redact_annot(rect, fill=(0, 0, 0))
 
-                    if not rects and len(search_text.split()) > 1:
-                        tokens = search_text.split()
-                        for tok in tokens:
-                            if len(tok) < 3:
-                                continue
-                            try:
-                                found = page.search_for(tok, hit_max=64)
-                            except Exception:
-                                found = []
-                            rects.extend(found)
+                if label:
+                    page.insert_text(
+                        (rect.x0, rect.y0 - 8),
+                        label,
+                        color=(1, 1, 1),
+                    )
 
-                    if not rects:
-                        continue
+        page.apply_redactions()
 
-                    for inst in rects:
-                        try:
-                            page.add_redact_annot(inst, fill=(0, 0, 0))
-                            if label:
-                                page.insert_text(
-                                    (inst.x0, inst.y0 - 8),
-                                    label,
-                                    color=(1, 1, 1),
-                                )
-                        except Exception as ex:
-                            logger.warning(
-                                "Failed to redact rect on page %d: %s", page_index, ex
-                            )
-                            continue
+    output_path = f"{OUTPUT_DIR}/{uuid.uuid4()}_redacted.pdf"
 
-                page.apply_redactions()
-
-            output_path = f"{OUTPUT_DIR}/{uuid.uuid4()}_redacted.pdf"
-            doc.save(output_path)
-            doc.close()
-            logger.info("Saved redacted PDF to %s", output_path)
-
-        else:
-            logger.info("Wrapping image into PDF")
-            img_doc = fitz.open()
-            img_doc.new_page()
-            page = img_doc[0]
-            page.insert_image(page.rect, stream=raw_bytes)
-            output_path = f"{OUTPUT_DIR}/{uuid.uuid4()}_redacted.pdf"
-            img_doc.save(output_path)
-            img_doc.close()
-            logger.info("Saved image-based PDF to %s", output_path)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("PDF/image redaction failed")
-        raise HTTPException(500, detail=f"PDF redaction failed: {e}")
-    finally:
-        try:
-            if os.path.exists(input_path) and input_path != output_path:
-                os.remove(input_path)
-                logger.info("Cleaned up temporary file %s", input_path)
-        except Exception as e:
-            logger.warning("Failed to delete temp file %s: %s", input_path, e)
+    doc.save(output_path)
+    doc.close()
 
     download_url = f"/api/download/{os.path.basename(output_path)}"
 
+    # ---------- DATABASE LOG ----------
+    entity_types = list(summary.counts.keys())
+
+    log_redaction(
+        filename=file.filename or "uploaded_file",
+        entities=",".join(entity_types),
+        output_path=output_path,
+    )
+
     if return_file:
-        logger.info("Returning redacted file directly")
+
         return FileResponse(
             output_path,
             media_type="application/pdf",
@@ -295,75 +647,45 @@ async def redact_file(
         redacted_text=redacted_text,
         summary=summary,
     )
- 
+
+
+# ---------------- SERVER PATH REDACTION ----------------
 @router.post("/redact-from-path", response_model=RedactionResponse)
 async def redact_from_path(payload: RedactFromPathRequest):
-    """
-    Accepts JSON { path: string, options?: {...} } where path is a server-local path the server can access.
-
-    SECURITY NOTE:
-      This endpoint is DISABLED when ENV is set to 'production' or 'prod'.
-    """
-    env = os.getenv("ENV", "").lower()
-    if env in {"production", "prod"}:
-        logger.warning("Attempt to use /redact-from-path in production")
-        raise HTTPException(
-            status_code=403, detail="This endpoint is disabled in production."
-        )
 
     path = payload.path
-    logger.info("Received /redact-from-path for %s", path)
 
     if not os.path.exists(path):
-        raise HTTPException(404, detail="Path not found on server")
+        raise HTTPException(404, "Path not found")
 
-    try:
-        with open(path, "rb") as f:
-            raw_bytes = f.read()
-    except Exception as e:
-        logger.exception("Failed to read server file")
-        raise HTTPException(500, detail=f"Failed to read server file: {e}")
+    with open(path, "rb") as f:
+        raw_bytes = f.read()
 
-    try:
-        text = extract_text_from_bytes(raw_bytes, content_type=None, filename=path)
-    except Exception as e:
-        logger.exception("Text extraction failed for server file")
-        raise HTTPException(
-            400, detail=f"Text extraction failed for server file: {e}"
-        )
-
-    options = payload.options or {}
-    redact_emails = bool(options.get("redact_emails", True))
-    redact_phones = bool(options.get("redact_phones", True))
-    redact_names = bool(options.get("redact_names", False))
-    redact_addresses = bool(options.get("redact_addresses", False))
-
-    label_style = options.get("label_style", "typed")
-
-    if label_style not in {"typed", "blackbox", "custom"}:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid label_style. Allowed: 'typed', 'blackbox', 'custom'.",
-        )
-    custom_label = options.get("custom_label")
+    text = extract_text_from_bytes(raw_bytes)
 
     entities = detect_pii(text)
-    entities = _filter_entities(
-        entities, redact_emails, redact_phones, redact_names, redact_addresses
-    )
-    redacted_text, items = apply_redaction(text, entities, label_style, custom_label)
+
+    redacted_text, items = apply_redaction(text, entities, "typed", None)
+
     summary = _build_summary(items)
 
-    try:
-        img_doc = fitz.open()
-        img_doc.new_page()
-        page = img_doc[0]
-        page.insert_image(page.rect, stream=raw_bytes)
-        output_path = f"{OUTPUT_DIR}/{uuid.uuid4()}_redacted.pdf"
-        img_doc.save(output_path)
-        img_doc.close()
-    except Exception:
-        output_path = path
+    output_path = f"{OUTPUT_DIR}/{uuid.uuid4()}_redacted.pdf"
+
+    img_doc = fitz.open()
+    img_doc.new_page()
+    page = img_doc[0]
+    page.insert_image(page.rect, stream=raw_bytes)
+    img_doc.save(output_path)
+    img_doc.close()
+
+    # ---------- DATABASE LOG ----------
+    entity_types = list(summary.counts.keys())
+
+    log_redaction(
+        filename=os.path.basename(path),
+        entities=",".join(entity_types),
+        output_path=output_path,
+    )
 
     download_url = f"/api/download/{os.path.basename(output_path)}"
 
@@ -376,13 +698,15 @@ async def redact_from_path(payload: RedactFromPathRequest):
     )
 
 
+# ---------------- FILE DOWNLOAD ----------------
 @router.get("/download/{filename}")
 async def download_file(filename: str):
+
     file_path = f"{OUTPUT_DIR}/{filename}"
+
     if not os.path.exists(file_path):
         raise HTTPException(404, "File not found")
 
-    logger.info("Serving download for %s", filename)
     return FileResponse(
         file_path,
         media_type="application/pdf",
